@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
@@ -13,15 +13,14 @@
 		</header>
 
 		<main>
-			<section id="board-area">
+			<section id="board-area" class="hidden-board">
 				<div id="board" class="board"></div>
 			</section>
 
 			<aside id="sidebar">
 				<div id="setup">
 					<h2>Setup</h2>
-					<div id="setup-instructions">Select 5 pieces (king required) then place them in your back two rows.
-					</div>
+					<div id="setup-instructions">Select 5 pieces (king required) then place them in your back two rows.</div>
 					<div id="roster">
 						<label><input type="checkbox" id="p-king" checked disabled/> King (10 HP) - required</label>
 						<label><input type="checkbox" class="p-choice" value="gunslinger" /> Gunslinger (7 HP)</label>
@@ -33,6 +32,11 @@
 					<button id="start-btn">Start Game (Player 1)</button>
 				</div>
 
+				<div id="turn-banner" class="turn-banner hidden">
+					<h2>Player's Turn</h2>
+					<div class="banner-text">It is <span id="banner-turn">-</span>'s turn</div>
+				</div>
+
 				<div id="controls" class="hidden">
 					<h2>Controls</h2>
 					<div id="turn-info">Turn: <span id="player-turn">-</span></div>
@@ -40,21 +44,41 @@
 						<button id="roll-btn">Roll Dice</button>
 						<div id="dice-result">-</div>
 					</div>
+					<button id="end-turn-btn" class="secondary-button hidden">End Turn</button>
 					<div id="action-info">Action: <span id="action-desc">-</span></div>
 					<div id="status"></div>
 					<button id="reset-btn">Reset Game</button>
 				</div>
 
-				<div id="log">
-					<h3>Game Log</h3>
-					<div id="messages"></div>
-				</div>
+				<button id="rules-toggle" class="rules-toggle">View Rules</button>
+				<div id="messages" class="hidden" aria-live="polite"></div>
 			</aside>
 		</main>
 
-		<footer>
-			<small>Dice: 1-3 movement, 4 = 2x damage, 5 = 3x damage, 6 = skip</small>
-		</footer>
+		<div id="rules-modal" class="rules-modal hidden">
+			<div class="rules-content">
+				<div class="rules-header">
+					<h2>Rules</h2>
+					<button id="rules-close" type="button" aria-label="Close rules">×</button>
+				</div>
+				<ul>
+					<li>6x6 board, five pieces per player (king + four fighters).</li>
+					<li>Dice: 1-3 movement, 4=double attack, 5=triple attack, 6=skip.</li>
+					<li>Gunslingers hit 3 dmg close, 2 dmg at range; bruisers & kings deal 3 dmg melee.</li>
+					<li>Win by eliminating the opposing king or all fighters.</li>
+				</ul>
+				<p>Place your roster in rows 4-5 after selecting your fighters.</p>
+			</div>
+		</div>
+
+		<div id="ready-modal" class="ready-modal hidden">
+			<div class="ready-card">
+				<p>Ready to Duel</p>
+				<button id="ready-continue" type="button">Let's Duel</button>
+			</div>
+		</div>
+
+		<footer></footer>
 
 		<script src="app.js"></script>
 	</body>

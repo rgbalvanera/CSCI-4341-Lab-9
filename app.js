@@ -1,6 +1,15 @@
-// Kings of the West - simple 6x6 tactical duel
+﻿// Kings of the West - simple 6x6 tactical duel
 const ROWS = 6, COLS = 6;
 
+const PIECE_ICONS = {
+    king: '\u{2B50}',
+    gunslinger: '\u{1F52B}',
+    bruiser: '\u{1FA93}',
+};
+
+let readyCallback = null;
+let readyTimeout = null;
+let skipTimeout = null;
 const state = {
 	board: [], // cells
 	players: {1:{pieces:[]},2:{pieces:[]}},
@@ -8,11 +17,18 @@ const state = {
 	phase: 'setup', // setup, placement, play
 	selectedPiece: null,
 	dice: null,
+	diceMultiplier: 1,
 	awaitingPlacement: 0,
+	actionLocked: false,
+	attackPending: false,
+	pendingPlacement: [],
+	attackTargets: new Set(),
 };
 
 const el = {
 	board: document.getElementById('board'),
+	boardArea: document.getElementById('board-area'),
+	sidebar: document.getElementById('sidebar'),
 	startBtn: document.getElementById('start-btn'),
 	rollBtn: document.getElementById('roll-btn'),
 	diceResult: document.getElementById('dice-result'),
@@ -21,16 +37,30 @@ const el = {
 	controls: document.getElementById('controls'),
 	messages: document.getElementById('messages'),
 	resetBtn: document.getElementById('reset-btn'),
+	setupPanel: document.getElementById('setup'),
+	turnBanner: document.getElementById('turn-banner'),
+	bannerTurn: document.getElementById('banner-turn'),
+	rulesToggle: document.getElementById('rules-toggle'),
+	rulesModal: document.getElementById('rules-modal'),
+	rulesClose: document.getElementById('rules-close'),
+	readyModal: document.getElementById('ready-modal'),
+	readyContinue: document.getElementById('ready-continue'),
+	endTurnBtn: document.getElementById('end-turn-btn'),
 };
 
 function log(...args){
 	const d = document.createElement('div');
 	d.textContent = args.join(' ');
-	el.messages.prepend(d);
+	if(el.messages){
+		el.messages.prepend(d);
+	} else {
+		console.log(...args);
+	}
 }
 
 function resetHighlights(){
 	document.querySelectorAll('.cell').forEach(c=>c.classList.remove('highlight-move','highlight-attack'));
+	state.attackTargets.clear();
 }
 
 function createBoard(){
@@ -43,8 +73,6 @@ function createBoard(){
 			const cell = document.createElement('div');
 			cell.className = 'cell';
 			cell.dataset.r = r; cell.dataset.c = c; cell.dataset.idx = idx;
-			const coord = document.createElement('div'); coord.className='coord'; coord.textContent = `${r},${c}`;
-			cell.appendChild(coord);
 			cell.addEventListener('click', ()=>onCellClick(r,c));
 			el.board.appendChild(cell);
 			state.board[idx].el = cell;
@@ -68,10 +96,15 @@ function renderBoard(){
 		const cell = state.board[idx].el;
 		const div = document.createElement('div'); div.className = `piece ${p.owner===1? 'p1':'p2'}`;
 		if(p.isKing) div.classList.add('p-king');
-		div.innerHTML = `<div>${p.type[0].toUpperCase()}</div><div class="hp">${p.hp}</div>`;
+		const icon = PIECE_ICONS[p.type] || p.type[0].toUpperCase();
+		div.innerHTML = `<div class="piece-icon">${icon}</div><div class="hp">${p.hp}</div>`;
 		div.title = `${p.type} (${p.hp} HP)`;
 		div.dataset.id = p.id;
-		div.addEventListener('click', (ev)=>{ ev.stopPropagation(); onPieceClick(p); });
+		div.addEventListener('click', (ev)=>{ 
+			ev.stopPropagation(); 
+			onPieceClick(p); 
+			if(state.attackTargets.has(p.id)) onCellClick(p.r,p.c); 
+		});
 		cell.appendChild(div);
 		cell.classList.toggle('dead', p.hp<=0);
 	}
@@ -123,6 +156,7 @@ function onCellClick(r,c){
 function onPieceClick(p){
 	if(state.phase==='placement') return;
 	if(state.phase==='play' && state.currentPlayer && p.owner===state.currentPlayer){
+		if(state.actionLocked) return;
 		// selecting own piece
 		state.selectedPiece = p;
 		resetHighlights();
@@ -133,26 +167,32 @@ function onPieceClick(p){
 			// also highlight attackable enemies in current position (if no move chosen)
 			const enemies = getEnemiesInAttackRange(p, p.r, p.c);
 			enemies.forEach(e=>state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'));
+			state.attackTargets = new Set(enemies.map(e=>e.id));
 			el.actionDesc.textContent = `Move up to ${state.dice} and optionally attack`;
 		} else if(state.dice===4 || state.dice===5){
 			// move up to 1 tile and attack with multiplier
 			const mult = state.dice===4?2:3;
 			state.diceMultiplier = mult;
-			// highlight reachable tiles (up to 1)
 			const tiles = getReachable(p, 1);
 			tiles.forEach(t=>state.board[t.r*COLS+t.c].el.classList.add('highlight-move'));
+			const attackCandidates = [];
 			// highlight enemies attackable from current position
 			const enemiesHere = getEnemiesInAttackRange(p, p.r, p.c, /*allowLong*/true);
-			enemiesHere.forEach(e=>state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'));
+			enemiesHere.forEach(e=>{ state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'); attackCandidates.push(e); });
 			// highlight enemies attackable from each possible move tile
 			for(const t of tiles){
 				const enemiesFrom = getEnemiesInAttackRange(p, t.r, t.c, /*allowLong*/true);
-				enemiesFrom.forEach(e=>state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'));
+				enemiesFrom.forEach(e=>{ state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'); attackCandidates.push(e); });
 			}
+			state.attackTargets = new Set(attackCandidates.map(e=>e.id));
 			el.actionDesc.textContent = `Move up to 1 tile and attack with ${mult}x damage - choose piece or target`;
 		} else if(state.dice===6){
 			el.actionDesc.textContent = 'This unit is skipped (rolled 6).';
+			state.attackTargets.clear();
 		}
+	}
+	if(state.attackTargets.size===0 && state.dice!==6){
+		state.attackTargets.clear();
 	}
 }
 
@@ -204,8 +244,13 @@ function getEnemiesInAttackRange(p, fromR, fromC, allowLong=false){
 
 function movePiece(p, r,c){
 	p.r = r; p.c = c; renderBoard();
+	state.dice = null;
+	state.diceMultiplier = 1;
+	state.actionLocked = true;
 	// after moving, allow attack if enemies in range
 	const enemies = getEnemiesInAttackRange(p, r, c);
+	state.attackPending = enemies.length>0;
+	state.attackTargets = new Set(enemies.map(e=>e.id));
 	if(enemies.length){
 		enemies.forEach(e=>state.board[e.r*COLS+e.c].el.classList.add('highlight-attack'));
 		el.actionDesc.textContent = 'Choose an enemy to attack or end turn.';
@@ -242,21 +287,105 @@ function endTurn(){
 	state.selectedPiece = null;
 	state.dice = null; state.diceMultiplier = 1;
 	el.diceResult.textContent = '-'; el.actionDesc.textContent='-';
+	el.rollBtn.disabled = false;
+	hideEndTurnButton();
+	if(skipTimeout){ clearTimeout(skipTimeout); skipTimeout = null; }
 	state.currentPlayer = state.currentPlayer===1?2:1;
+	state.actionLocked = false;
+	state.attackPending = false;
 	updateTurnInfo();
 }
 
 function updateTurnInfo(){
-	el.playerTurn.textContent = state.currentPlayer?`Player ${state.currentPlayer}`:'-';
+	el.sidebar?.classList.remove('player-1-turn','player-2-turn');
+	el.controls?.classList.remove('player-1-turn','player-2-turn');
+	if(!state.currentPlayer){
+		el.playerTurn.textContent='-';
+		el.turnBanner?.classList.add('hidden');
+		if(el.bannerTurn) el.bannerTurn.textContent='-';
+		return;
+	}
+	el.playerTurn.textContent = `Player ${state.currentPlayer}`;
+	if(el.bannerTurn) el.bannerTurn.textContent = `Player ${state.currentPlayer}`;
+	el.turnBanner?.classList.remove('hidden');
+	el.sidebar?.classList.add(`player-${state.currentPlayer}-turn`);
+	el.controls?.classList.add(`player-${state.currentPlayer}-turn`);
+	el.playerTurn.classList.remove('pulse');
+	requestAnimationFrame(()=> el.playerTurn.classList.add('pulse'));
+}
+
+function showRules(){
+	el.rulesModal?.classList.remove('hidden');
+}
+
+function hideRules(){
+	el.rulesModal?.classList.add('hidden');
+}
+
+function showEndTurnButton(){
+	el.endTurnBtn?.classList.remove('hidden');
+}
+
+function hideEndTurnButton(){
+	el.endTurnBtn?.classList.add('hidden');
+}
+
+function showReadyMessage(callback){
+	readyCallback = callback||null;
+	el.readyModal?.classList.remove('hidden');
+	if(readyTimeout){ clearTimeout(readyTimeout); readyTimeout = null; }
+	readyTimeout = setTimeout(hideReadyMessage, 1400);
+}
+
+function hideReadyMessage(){
+	if(!el.readyModal) return;
+	el.readyModal.classList.add('hidden');
+	if(readyTimeout){ clearTimeout(readyTimeout); readyTimeout = null; }
+	if(readyCallback){
+		const cb = readyCallback;
+		readyCallback = null;
+		cb();
+	}
+	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
+		const elCell = state.board[p.r*COLS+p.c].el;
+		if(elCell.classList.contains('highlight-attack')){
+			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
+		}
+	}
+	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
+		if(state.attackTargets.has(p.id)){
+			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
+		}
+	}
 }
 
 function rollDice(){ return Math.floor(Math.random()*6)+1; }
 
 function onRoll(){
 	if(state.phase!=='play') return;
-	const r = rollDice(); state.dice = r; el.diceResult.textContent = r; log(`Player ${state.currentPlayer} rolled ${r}`);
-	if(r===6){ log('Unlucky! Turn skipped.'); endTurn(); return; }
+	state.actionLocked = false;
+	state.attackPending = false;
+	state.diceMultiplier = 1;
+	state.selectedPiece = null;
+	resetHighlights();
+	const r = rollDice();
+	state.dice = r;
+	el.diceResult.textContent = r;
+	el.rollBtn.disabled = true;
+	log(`Player ${state.currentPlayer} rolled ${r}`);
+	if(r===6){
+		log('Unlucky! Turn skipped.');
+		el.actionDesc.textContent = 'Rolled 6: turn skipped';
+		hideEndTurnButton();
+		if(skipTimeout) clearTimeout(skipTimeout);
+		skipTimeout = setTimeout(()=>{
+			skipTimeout = null;
+			endTurn();
+		}, 1100);
+		return;
+	}
 	// player must now select a piece to act
+	showEndTurnButton();
 	if(r>=1 && r<=3){
 		el.actionDesc.textContent = `Select a piece to move up to ${r}`;
 	} else if(r===4 || r===5){
@@ -291,6 +420,8 @@ function startPlacement(){
 		alert('Please select exactly 4 additional pieces (plus the king makes 5).');
 		return;
 	}
+	el.startBtn.disabled = true;
+	el.boardArea.classList.remove('hidden-board');
 	// prepare pending placement: include king forced first? We auto-place king at bottom-left
 	state.pendingPlacement = [...choices];
 	state.awaitingPlacement = choices.length;
@@ -316,8 +447,8 @@ function finishPlayer1Placement(){
 		const s = free[i]; if(!s) break; placePiece(2, roster[i], s.r, s.c, roster[i]==='king');
 	}
 	log('Player 2 auto-placed their roster (king at 0,5).');
-	// decide who starts by dice
-	decideFirstPlayer();
+	// decide who starts by dice after confirming ready
+	showReadyMessage(decideFirstPlayer);
 }
 
 function decideFirstPlayer(){
@@ -327,6 +458,7 @@ function decideFirstPlayer(){
 	state.currentPlayer = starter; state.phase='play'; el.controls.classList.remove('hidden'); el.startBtn.style.display='none';
 	log(`Player 1 rolled ${a}, Player 2 rolled ${b}. Player ${starter} goes first.`);
 	renderBoard(); updateTurnInfo();
+	el.setupPanel?.classList.add('hidden');
 }
 
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
@@ -337,8 +469,21 @@ function init(){
 	el.startBtn.addEventListener('click', startPlacement);
 	el.rollBtn.addEventListener('click', onRoll);
 	el.resetBtn.addEventListener('click', ()=>location.reload());
+	el.rulesToggle?.addEventListener('click', showRules);
+	el.rulesClose?.addEventListener('click', hideRules);
+	el.rulesModal?.addEventListener('click', (ev)=>{ if(ev.target===el.rulesModal) hideRules(); });
+	el.readyContinue?.addEventListener('click', hideReadyMessage);
+	el.readyModal?.addEventListener('click', (ev)=>{ if(ev.target===el.readyModal) hideReadyMessage(); });
+	el.endTurnBtn?.addEventListener('click', ()=>{
+		el.actionDesc.textContent = 'Turn ended early';
+		endTurn();
+	});
 	el.controls.classList.add('hidden');
 }
 
 init();
+
+
+
+
 
