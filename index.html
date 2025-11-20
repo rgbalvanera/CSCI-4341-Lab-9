@@ -20,6 +20,16 @@
 			<aside id="sidebar">
 				<div id="setup">
 					<h2>Setup</h2>
+					<div id="mode-select">
+						<label><input type="radio" name="mode" value="pvp" checked /> Player vs Player</label>
+						<label><input type="radio" name="mode" value="pvai" /> Player vs AI</label>
+						<div id="ai-difficulty" class="hidden">
+							<span>AI Difficulty:</span>
+							<button class="ai-diff" data-diff="easy">Easy</button>
+							<button class="ai-diff" data-diff="medium">Medium</button>
+							<button class="ai-diff" data-diff="hard">Hard</button>
+						</div>
+					</div>
 					<div id="setup-instructions">Each player: select 4 fighters (king is required). Then place them in your back two rows.</div>
 					<div id="roster">
 						<div class="roster-column">
@@ -63,6 +73,7 @@
 				</div>
 
 				<button id="rules-toggle" class="rules-toggle">View Rules</button>
+				<div id="mode-note" class="mode-note">Mode: <span id="current-mode">PvP</span></div>
 				<div id="messages" class="hidden" aria-live="polite"></div>
 			</aside>
 		</main>
@@ -92,6 +103,7 @@
 
 		<footer></footer>
 
+		<script src="easyai.js"></script>
 		<script src="app.js"></script>
 	</body>
 </html>

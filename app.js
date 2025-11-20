@@ -23,6 +23,8 @@ const state = {
 	attackPending: false,
 	pendingPlacement: [],
 	attackTargets: new Set(),
+	aiEnabled: false,
+	aiDifficulty: 'easy',
 };
 
 const el = {
@@ -46,6 +48,10 @@ const el = {
 	readyModal: document.getElementById('ready-modal'),
 	readyContinue: document.getElementById('ready-continue'),
 	endTurnBtn: document.getElementById('end-turn-btn'),
+	modeSelect: document.getElementById('mode-select'),
+	aiDifficulty: document.getElementById('ai-difficulty'),
+	aiDiffButtons: null,
+	currentMode: document.getElementById('current-mode'),
 };
 
 function log(...args){
@@ -242,8 +248,6 @@ function getEnemiesInAttackRange(p, fromR, fromC, allowLong=false){
 
 function movePiece(p, r,c){
 	p.r = r; p.c = c; renderBoard();
-	state.dice = null;
-	state.diceMultiplier = 1;
 	state.actionLocked = true;
 	// after moving, allow attack if enemies in range
 	const enemies = getEnemiesInAttackRange(p, r, c);
@@ -292,6 +296,8 @@ function endTurn(){
 	state.actionLocked = false;
 	state.attackPending = false;
 	updateTurnInfo();
+	// If the next player is AI, trigger its turn
+	triggerAITurnIfNeeded();
 }
 
 function updateTurnInfo(){
@@ -343,17 +349,6 @@ function hideReadyMessage(){
 		const cb = readyCallback;
 		readyCallback = null;
 		cb();
-	}
-	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
-		const elCell = state.board[p.r*COLS+p.c].el;
-		if(elCell.classList.contains('highlight-attack')){
-			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
-		}
-	}
-	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
-		if(state.attackTargets.has(p.id)){
-			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
-		}
 	}
 }
 
@@ -459,6 +454,74 @@ function decideFirstPlayer(){
 	log(`Player 1 rolled ${a}, Player 2 rolled ${b}. Player ${starter} goes first.`);
 	renderBoard(); updateTurnInfo();
 	el.setupPanel?.classList.add('hidden');
+	// If AI is enabled and it's the AI's turn, trigger its turn
+	triggerAITurnIfNeeded();
+}
+
+// Trigger the AI if it's the AI player's turn
+function triggerAITurnIfNeeded(){
+	if(state.phase!=='play') return;
+	if(!state.aiEnabled) return;
+	// default: Player 2 is AI
+	if(state.currentPlayer===2){
+		// small delay for UX
+		setTimeout(()=>{ aiTurn(); }, 700);
+	}
+}
+
+function aiTurn(){
+	if(state.phase!=='play' || !state.aiEnabled || state.currentPlayer!==2) return;
+	state.actionLocked = false; state.attackPending = false; state.selectedPiece = null;
+	resetHighlights();
+	const r = rollDice();
+	state.dice = r; el.diceResult.textContent = r; el.rollBtn.disabled = true;
+	log(`AI (Player 2) rolled ${r}`);
+	if(r===6){
+		log('AI rolled 6: skipped');
+		el.actionDesc.textContent = 'AI rolled 6: turn skipped';
+		// let user see message briefly
+		setTimeout(()=> endTurn(), 900);
+		return;
+	}
+	if(r===4 || r===5){ state.diceMultiplier = (r===4?2:3); }
+	// Give AI a brief moment to "think"
+	setTimeout(()=>{
+		try{
+			const action = (typeof EasyAI!=='undefined' && EasyAI.chooseAction) ? EasyAI.chooseAction(state, 2) : null;
+			if(!action){ log('AI had no action, ending turn'); setTimeout(()=> endTurn(), 400); return; }
+			const attacker = findPieceById(action.pieceId);
+			if(!attacker){ log('AI selected missing piece'); setTimeout(()=> endTurn(), 400); return; }
+			// perform move if present
+			if(action.move){
+				movePiece(attacker, action.move.r, action.move.c);
+				// if AI intended to attack after moving, perform attack
+				if(action.attackId){
+					const target = findPieceById(action.attackId);
+					if(target){
+						// slight delay to show move
+						setTimeout(()=> performAttack(attacker, target, state.diceMultiplier || 1), 350);
+					} else {
+						// no target, end turn after short pause
+						setTimeout(()=> endTurn(), 350);
+					}
+				}
+				// if no attack intended, movePiece will call endTurn() when appropriate
+				return;
+			}
+			// no move, maybe attack from place
+			if(action.attackId){
+				const target = findPieceById(action.attackId);
+				if(target){
+					performAttack(attacker, target, state.diceMultiplier || 1);
+				} else {
+					setTimeout(()=> endTurn(), 300);
+				}
+				return;
+			}
+			// fallback: end turn
+			setTimeout(()=> endTurn(), 300);
+		}catch(err){ console.error('AI error', err); setTimeout(()=> endTurn(), 400); }
+	}, 300);
 }
 
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
@@ -478,6 +541,30 @@ function init(){
 		el.actionDesc.textContent = 'Turn ended early';
 		endTurn();
 	});
+
+	// Mode selection wiring
+	el.aiDiffButtons = Array.from(document.querySelectorAll('.ai-diff'));
+	const modeRadios = Array.from(document.querySelectorAll('input[name="mode"]'));
+	function setMode(mode){
+		state.aiEnabled = (mode === 'pvai');
+		el.currentMode && (el.currentMode.textContent = (mode==='pvai'?'PvAI':'PvP'));
+		if(state.aiEnabled){ el.aiDifficulty.classList.remove('hidden'); } else { el.aiDifficulty.classList.add('hidden'); }
+	}
+	modeRadios.forEach(r=> r.addEventListener('change', (e)=> setMode(e.target.value)));
+	// difficulty buttons
+	el.aiDiffButtons.forEach(btn=>{
+		btn.addEventListener('click', ()=>{
+			const diff = btn.dataset.diff;
+			state.aiDifficulty = diff;
+			// visual selected
+			el.aiDiffButtons.forEach(b=>b.classList.remove('selected'));
+			btn.classList.add('selected');
+		});
+	});
+	// default
+	setMode('pvp');
+	// mark easy selected by default
+	const defaultBtn = el.aiDiffButtons.find(b=>b.dataset.diff==='easy'); if(defaultBtn) defaultBtn.classList.add('selected');
 	el.controls.classList.add('hidden');
 }
 
