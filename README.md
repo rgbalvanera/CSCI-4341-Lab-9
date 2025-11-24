@@ -14,8 +14,8 @@ Quick rules
 	- Roll 1: move 1 tile (may attack after move)
 	- Roll 2: move up to 2 tiles
 	- Roll 3: move up to 3 tiles
-	- Roll 4: attack with 2x damage (no move)
-	- Roll 5: attack with 3x damage (no move)
+	- Roll 4: move 1 tile + attack with 2x damage 
+	- Roll 5: move 1 tile + attack with 3x damage 
 	- Roll 6: unlucky — skip
 - Attacks:
 	- Gunslinger: short (1 tile) = 3 dmg; long (2-3 tiles) = 2 dmg
