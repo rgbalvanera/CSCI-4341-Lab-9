@@ -1,18 +1,22 @@
 // Easy AI for Kings of the West
 // Exposes EasyAI.chooseAction(state, player)
-// Heuristic priorities:
-// 1) Immediate capture / highest damage action
-// 2) Move+attack that yields highest damage (if movement allowed)
-// 3) Safe move (minimize being in enemy attack range)
-// 4) Advance toward nearest enemy
 
 var EasyAI = (function(){
     function cloneState(s){
-        // minimal shallow clone to avoid mutation
-        return JSON.parse(JSON.stringify(s));
+        // FIX: Do not JSON.stringify the whole 's' (state) because s.board 
+        // contains DOM elements, which causes a Circular Reference crash.
+        // We only need players, dice, current player, and phase.
+        return {
+            players: JSON.parse(JSON.stringify(s.players)),
+            currentPlayer: s.currentPlayer,
+            dice: s.dice,
+            phase: s.phase
+            // We ignore s.board and s.attackTargets here
+        };
     }
 
     function getPieceAt(state, r, c){
+        // Note: This function relies on state.players, not state.board
         for(const pl of [1,2]){
             for(const p of state.players[pl].pieces){
                 if(p.r===r && p.c===c && p.hp>0) return p;

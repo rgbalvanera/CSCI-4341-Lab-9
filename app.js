@@ -23,8 +23,6 @@ const state = {
 	attackPending: false,
 	pendingPlacement: [],
 	attackTargets: new Set(),
-	aiEnabled: false,
-	aiDifficulty: 'easy',
 };
 
 const el = {
@@ -48,19 +46,33 @@ const el = {
 	readyModal: document.getElementById('ready-modal'),
 	readyContinue: document.getElementById('ready-continue'),
 	endTurnBtn: document.getElementById('end-turn-btn'),
-	modeSelect: document.getElementById('mode-select'),
+	modePvp: document.getElementById('mode-pvp'),
+	modePvAi: document.getElementById('mode-pvai'),
 	aiDifficulty: document.getElementById('ai-difficulty'),
-	aiDiffButtons: null,
-	currentMode: document.getElementById('current-mode'),
+	aiStatus: document.getElementById('ai-status'),
+	gameLog: document.getElementById('game-log'),
+	victoryModal: document.getElementById('victory-modal'),
+	victoryTitle: document.getElementById('victory-title'),
+	victoryMessage: document.getElementById('victory-message'),
+	victoryClose: document.getElementById('victory-close'),
 };
 
 function log(...args){
+	const msg = args.join(' ');
 	const d = document.createElement('div');
-	d.textContent = args.join(' ');
+	d.textContent = msg;
 	if(el.messages){
 		el.messages.prepend(d);
 	} else {
 		console.log(...args);
+	}
+	// Also add to game log (bottom append)
+	if(el.gameLog){
+		const entry = document.createElement('div');
+		entry.textContent = msg;
+		el.gameLog.appendChild(entry);
+		// Scroll to bottom
+		el.gameLog.scrollTop = el.gameLog.scrollHeight;
 	}
 }
 
@@ -248,6 +260,8 @@ function getEnemiesInAttackRange(p, fromR, fromC, allowLong=false){
 
 function movePiece(p, r,c){
 	p.r = r; p.c = c; renderBoard();
+	state.dice = null;
+	state.diceMultiplier = 1;
 	state.actionLocked = true;
 	// after moving, allow attack if enemies in range
 	const enemies = getEnemiesInAttackRange(p, r, c);
@@ -296,8 +310,10 @@ function endTurn(){
 	state.actionLocked = false;
 	state.attackPending = false;
 	updateTurnInfo();
-	// If the next player is AI, trigger its turn
-	triggerAITurnIfNeeded();
+	// If next player is AI, schedule AI turn
+	if(isAIPlayer(state.currentPlayer)){
+		setTimeout(()=>{ handleAITurn(); }, 250);
+	}
 }
 
 function updateTurnInfo(){
@@ -350,6 +366,17 @@ function hideReadyMessage(){
 		readyCallback = null;
 		cb();
 	}
+	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
+		const elCell = state.board[p.r*COLS+p.c].el;
+		if(elCell.classList.contains('highlight-attack')){
+			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
+		}
+	}
+	if(state.phase==='play' && state.currentPlayer && state.selectedPiece && p.owner!==state.currentPlayer){
+		if(state.attackTargets.has(p.id)){
+			performAttack(state.selectedPiece, p, state.diceMultiplier || 1);
+		}
+	}
 }
 
 function rollDice(){ return Math.floor(Math.random()*6)+1; }
@@ -396,7 +423,7 @@ function checkWin(){
 		if(!kingAlive || fightersAlive===0){
 			// pl wins
 			log(`Player ${pl} wins!`);
-			alert(`Player ${pl} wins!`);
+			showVictoryScreen(pl);
 			state.phase='finished';
 			el.controls.classList.add('hidden');
 			return true;
@@ -405,11 +432,27 @@ function checkWin(){
 	return false;
 }
 
+function showVictoryScreen(winner){
+	if(!el.victoryModal) return;
+	el.victoryTitle.textContent = 'Victory!';
+	el.victoryMessage.textContent = `Player ${winner} wins!`;
+	el.victoryModal.classList.remove('hidden');
+	el.victoryClose && (el.victoryClose.onclick = ()=>{
+		el.victoryModal.classList.add('hidden');
+	});
+}
+
 function startPlacement(){
 	state.phase='placement';
 	// read selected choices
 	const choices1 = Array.from(document.querySelectorAll('.p-choice-p1')).filter(i=>i.checked).map(i=>i.value);
-	const choices2 = Array.from(document.querySelectorAll('.p-choice-p2')).filter(i=>i.checked).map(i=>i.value);
+	let choices2;
+	if(el.modePvAi && el.modePvAi.checked){
+		choices2 = autoPickRosterFromDOM();
+		log(`AI selected roster: ${choices2.join(', ')}`);
+	} else {
+		choices2 = Array.from(document.querySelectorAll('.p-choice-p2')).filter(i=>i.checked).map(i=>i.value);
+	}
 	if(choices1.length!==4 || choices2.length!==4){
 		alert('Each player must select exactly 4 additional pieces (plus the king makes 5).');
 		return;
@@ -428,6 +471,15 @@ function startPlacement(){
 	el.startBtn.disabled = true; el.startBtn.textContent='Placing...';
 }
 
+function autoPickRosterFromDOM(){
+	// pick 4 random choices from the Player 2 choice inputs
+	const nodes = Array.from(document.querySelectorAll('.p-choice-p2'));
+	const vals = nodes.map(n=>n.value);
+	// shuffle vals
+	for(let i=vals.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [vals[i], vals[j]]=[vals[j], vals[i]]; }
+	return vals.slice(0,4);
+}
+
 function handlePlacementComplete(){
 	// If player 1 just finished, switch to player 2 placement
 	if(!state.placementOwner || state.placementOwner===1){
@@ -438,12 +490,45 @@ function handlePlacementComplete(){
 		state.pendingPlacement = [...(state.roster2||[])];
 		state.awaitingPlacement = state.pendingPlacement.length;
 		log('Player 2 king placed at (0,5). Player 2: place your remaining pieces by clicking rows 0-1.');
+		// If Player 2 is an AI, auto-place its remaining pieces
+		if(isAIPlayer(2)){
+			autoPlaceFor(2);
+			// after auto-placing, finalize placement
+			state.pendingPlacement = [];
+			state.awaitingPlacement = 0;
+			// continue to finish placement
+			handlePlacementComplete();
+			return;
+		}
 		return;
 	}
 
 	// both players finished placement
 	log('Both players placed. Ready to begin.');
 	showReadyMessage(decideFirstPlayer);
+}
+
+function autoPlaceFor(owner){
+	// auto-place pieces in the owner's back two rows (avoid occupied tiles)
+	const validRows = owner===1 ? [4,5] : [0,1];
+	const emptyTiles = [];
+	for(const r of validRows){
+		for(let c=0;c<COLS;c++){
+			if(!getPieceAt(r,c)) emptyTiles.push({r,c});
+		}
+	}
+	// shuffle emptyTiles
+	for(let i=emptyTiles.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [emptyTiles[i], emptyTiles[j]]=[emptyTiles[j], emptyTiles[i]]; }
+	// place pending pieces into tiles in order
+	const toPlace = state.pendingPlacement.slice();
+	for(let i=0;i<toPlace.length;i++){
+		const type = toPlace[i];
+		const tile = emptyTiles.shift();
+		if(!tile) break; // no space
+		placePiece(owner, type, tile.r, tile.c, type==='king');
+	}
+	renderBoard();
+	log(`AI (Player ${owner}) auto-placed ${toPlace.length} pieces.`);
 }
 
 function decideFirstPlayer(){
@@ -454,74 +539,93 @@ function decideFirstPlayer(){
 	log(`Player 1 rolled ${a}, Player 2 rolled ${b}. Player ${starter} goes first.`);
 	renderBoard(); updateTurnInfo();
 	el.setupPanel?.classList.add('hidden');
-	// If AI is enabled and it's the AI's turn, trigger its turn
-	triggerAITurnIfNeeded();
+	// If the first player is an AI, kick off AI turn
+	if(isAIPlayer(state.currentPlayer)){
+		handleAITurn();
+	}
 }
 
-// Trigger the AI if it's the AI player's turn
-function triggerAITurnIfNeeded(){
+function isAIPlayer(player){
+	// When Player vs AI is selected, Player 2 is the AI
+	if(!el.modePvAi) return false;
+	if(el.modePvAi.checked && player===2) return true;
+	return false;
+}
+
+function handleAITurn(){
 	if(state.phase!=='play') return;
-	if(!state.aiEnabled) return;
-	// default: Player 2 is AI
-	if(state.currentPlayer===2){
-		// small delay for UX
-		setTimeout(()=>{ aiTurn(); }, 700);
-	}
-}
-
-function aiTurn(){
-	if(state.phase!=='play' || !state.aiEnabled || state.currentPlayer!==2) return;
-	state.actionLocked = false; state.attackPending = false; state.selectedPiece = null;
-	resetHighlights();
-	const r = rollDice();
-	state.dice = r; el.diceResult.textContent = r; el.rollBtn.disabled = true;
-	log(`AI (Player 2) rolled ${r}`);
-	if(r===6){
-		log('AI rolled 6: skipped');
-		el.actionDesc.textContent = 'AI rolled 6: turn skipped';
-		// let user see message briefly
-		setTimeout(()=> endTurn(), 900);
-		return;
-	}
-	if(r===4 || r===5){ state.diceMultiplier = (r===4?2:3); }
-	// Give AI a brief moment to "think"
+	if(!isAIPlayer(state.currentPlayer)) return;
+	// Lock UI
+	state.actionLocked = true;
+	el.rollBtn.disabled = true;
+	el.aiStatus && (el.aiStatus.textContent = 'AI thinking...');
+	// small delay to simulate thinking
 	setTimeout(()=>{
-		try{
-			const action = (typeof EasyAI!=='undefined' && EasyAI.chooseAction) ? EasyAI.chooseAction(state, 2) : null;
-			if(!action){ log('AI had no action, ending turn'); setTimeout(()=> endTurn(), 400); return; }
-			const attacker = findPieceById(action.pieceId);
-			if(!attacker){ log('AI selected missing piece'); setTimeout(()=> endTurn(), 400); return; }
-			// perform move if present
-			if(action.move){
-				movePiece(attacker, action.move.r, action.move.c);
-				// if AI intended to attack after moving, perform attack
+		// roll for AI
+		const r = rollDice();
+		state.dice = r;
+		el.diceResult.textContent = r;
+		log(`AI (Player ${state.currentPlayer}) rolled ${r}`);
+		if(r===6){
+			log('AI rolled 6: turn skipped.');
+			el.actionDesc.textContent = 'AI rolled 6: skipped';
+			setTimeout(()=>{ endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); }, 800);
+			return;
+		}
+		// Ask AI based on selected difficulty
+		const diff = el.aiDifficulty ? el.aiDifficulty.value : 'easy';
+		if(diff==='easy'){
+			try{
+				const raw = state; // EasyAI will clone what it needs
+				const action = typeof EasyAI!=='undefined' ? EasyAI.chooseAction(raw, state.currentPlayer) : null;
+				if(!action){
+					log('AI found no action; ending turn.');
+					endTurn();
+					el.aiStatus && (el.aiStatus.textContent = 'AI: ready');
+					return;
+				}
+				const attacker = findPieceById(action.pieceId);
+				if(!attacker){ log('AI target piece not found'); endTurn(); return; }
+				// perform move (if any) by directly updating coordinates and rendering
+				if(action.move){
+					attacker.r = action.move.r; attacker.c = action.move.c;
+					renderBoard();
+				}
+				// perform attack (if any)
 				if(action.attackId){
 					const target = findPieceById(action.attackId);
 					if(target){
-						// slight delay to show move
-						setTimeout(()=> performAttack(attacker, target, state.diceMultiplier || 1), 350);
-					} else {
-						// no target, end turn after short pause
-						setTimeout(()=> endTurn(), 350);
+						const mult = (state.dice===4?2:(state.dice===5?3:1));
+						performAttack(attacker, target, mult);
+						el.aiStatus && (el.aiStatus.textContent = 'AI: ready');
+						return;
 					}
 				}
-				// if no attack intended, movePiece will call endTurn() when appropriate
-				return;
+				// no attack — end turn after small delay
+				setTimeout(()=>{ endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); }, 350);
+			}catch(err){
+				console.error('AI error', err); log('AI error, ending turn.'); endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready');
 			}
-			// no move, maybe attack from place
-			if(action.attackId){
-				const target = findPieceById(action.attackId);
-				if(target){
-					performAttack(attacker, target, state.diceMultiplier || 1);
-				} else {
-					setTimeout(()=> endTurn(), 300);
-				}
-				return;
-			}
-			// fallback: end turn
-			setTimeout(()=> endTurn(), 300);
-		}catch(err){ console.error('AI error', err); setTimeout(()=> endTurn(), 400); }
-	}, 300);
+		} else if(diff==='medium'){
+			// Use MCTS
+			try{
+				el.aiStatus && (el.aiStatus.textContent = 'AI (MCTS) thinking...');
+				// run MCTS; iterations balanced for browser responsiveness
+				const iterations = 160;
+				const action = (typeof MCTS!=='undefined') ? MCTS.chooseAction(state, state.currentPlayer, iterations) : null;
+				if(!action){ log('MCTS returned no action; ending turn.'); endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); return; }
+				const attacker = findPieceById(action.pieceId);
+				if(!attacker){ log('AI target piece not found'); endTurn(); return; }
+				if(action.move){ attacker.r = action.move.r; attacker.c = action.move.c; renderBoard(); }
+				if(action.attackId){ const target = findPieceById(action.attackId); if(target){ const mult = (state.dice===4?2:(state.dice===5?3:1)); performAttack(attacker, target, mult); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); return; } }
+				setTimeout(()=>{ endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); }, 350);
+			}catch(err){ console.error('MCTS error', err); log('MCTS failed; ending turn.'); endTurn(); el.aiStatus && (el.aiStatus.textContent = 'AI: ready'); }
+		} else {
+			log('Selected AI difficulty not implemented; defaulting to easy.');
+			el.aiDifficulty.value = 'easy';
+			handleAITurn();
+		}
+	}, 500);
 }
 
 function shuffleArray(a){ for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } }
@@ -532,40 +636,38 @@ function init(){
 	el.startBtn.addEventListener('click', startPlacement);
 	el.rollBtn.addEventListener('click', onRoll);
 	el.resetBtn.addEventListener('click', ()=>location.reload());
-	el.rulesToggle?.addEventListener('click', showRules);
-	el.rulesClose?.addEventListener('click', hideRules);
-	el.rulesModal?.addEventListener('click', (ev)=>{ if(ev.target===el.rulesModal) hideRules(); });
 	el.readyContinue?.addEventListener('click', hideReadyMessage);
 	el.readyModal?.addEventListener('click', (ev)=>{ if(ev.target===el.readyModal) hideReadyMessage(); });
 	el.endTurnBtn?.addEventListener('click', ()=>{
 		el.actionDesc.textContent = 'Turn ended early';
 		endTurn();
 	});
-
-	// Mode selection wiring
-	el.aiDiffButtons = Array.from(document.querySelectorAll('.ai-diff'));
-	const modeRadios = Array.from(document.querySelectorAll('input[name="mode"]'));
-	function setMode(mode){
-		state.aiEnabled = (mode === 'pvai');
-		el.currentMode && (el.currentMode.textContent = (mode==='pvai'?'PvAI':'PvP'));
-		if(state.aiEnabled){ el.aiDifficulty.classList.remove('hidden'); } else { el.aiDifficulty.classList.add('hidden'); }
-	}
-	modeRadios.forEach(r=> r.addEventListener('change', (e)=> setMode(e.target.value)));
-	// difficulty buttons
-	el.aiDiffButtons.forEach(btn=>{
-		btn.addEventListener('click', ()=>{
-			const diff = btn.dataset.diff;
-			state.aiDifficulty = diff;
-			// visual selected
-			el.aiDiffButtons.forEach(b=>b.classList.remove('selected'));
-			btn.classList.add('selected');
-		});
-	});
-	// default
-	setMode('pvp');
-	// mark easy selected by default
-	const defaultBtn = el.aiDiffButtons.find(b=>b.dataset.diff==='easy'); if(defaultBtn) defaultBtn.classList.add('selected');
+	// Mode toggles for AI
 	el.controls.classList.add('hidden');
+	if(el.modePvp && el.modePvAi){
+		const aiOptions = document.getElementById('ai-options');
+		const rosterP2 = document.getElementById('roster-p2');
+		function updateMode(){
+			if(el.modePvAi.checked){
+				aiOptions.style.display = 'block';
+				el.aiStatus && (el.aiStatus.textContent = 'AI: Easy available now');
+				if(rosterP2){ rosterP2.style.opacity = '0.6'; rosterP2.querySelectorAll('input').forEach(i=>i.disabled=true); }
+			} else {
+				aiOptions.style.display = 'none';
+				el.aiStatus && (el.aiStatus.textContent = '');
+				if(rosterP2){ rosterP2.style.opacity = '1'; rosterP2.querySelectorAll('input').forEach(i=>i.disabled=false); }
+			}
+		}
+		el.modePvp.addEventListener('change', updateMode);
+		el.modePvAi.addEventListener('change', updateMode);
+		updateMode();
+	}
+	// Victory modal close (in case user clicks X before game end)
+	if(el.victoryClose && el.victoryModal){
+		el.victoryClose.onclick = ()=>{ el.victoryModal.classList.add('hidden'); };
+	}
+	// Clear game log at start
+	if(el.gameLog) el.gameLog.innerHTML = '';
 }
 
 init();
