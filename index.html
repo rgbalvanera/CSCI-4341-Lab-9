@@ -12,13 +12,39 @@
 			<p>Two kings settle their differences. Take out the opposing king or fighters!</p>
 		</header>
 
-		<main>
-			<section id="board-area" class="hidden-board">
-				<div id="board" class="board"></div>
-			</section>
+		<main style="display:flex; flex-direction:row; min-height:80vh;">
+		   <aside id="rules-pane" style="width:220px; background:#f8f8f8; border-right:1px solid #ccc; padding:16px 10px 16px 16px;">
+			   <h2 style="margin-top:0;">Rules</h2>
+			   <ul style="font-size:0.98em; padding-left:18px;">
+				   <li>6x6 board, 5 pieces per player (king + 4 fighters).</li>
+				   <li>Dice: 1-3 = move, 4=double attack, 5=triple attack, 6=skip.</li>
+				   <li>Gunslingers: 3 dmg close, 2 dmg at range.</li>
+				   <li>Bruisers/Kings: 3 dmg melee only.</li>
+				   <li>Win: eliminate the opposing king or all fighters.</li>
+			   </ul>
+		   </aside>
 
-			<aside id="sidebar">
-				<div id="setup">
+		   <section id="board-area" class="hidden-board" style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;">
+			   <div id="board" class="board"></div>
+		   </section>
+
+		   <aside id="sidebar" style="width:320px; background:#fafbfc; border-left:1px solid #ccc; display:flex; flex-direction:column;">
+			   <div id="setup">
+					<h2>Game Mode</h2>
+					<div id="game-mode">
+						<label><input type="radio" name="mode" id="mode-pvp" value="pvp" checked> Player vs Player</label>
+						<label><input type="radio" name="mode" id="mode-pvai" value="pvai"> Player vs AI (Player 2 is AI)</label>
+						<div id="ai-options" style="margin-top:6px;">
+							<label for="ai-difficulty">AI Difficulty:</label>
+							<select id="ai-difficulty">
+								<option value="easy" selected>Easy</option>
+								<option value="medium">Medium</option>
+								<option value="hard" disabled>Hard (coming soon)</option>
+							</select>
+							<div id="ai-status" style="font-size:0.9em;margin-top:4px;color:#444">AI: Easy available now</div>
+						</div>
+					</div>
+
 					<h2>Setup</h2>
 					<div id="setup-instructions">Each player: select 4 fighters (king is required). Then place them in your back two rows.</div>
 					<div id="roster">
@@ -31,7 +57,7 @@
 							<label><input type="checkbox" class="p-choice-p1" value="bruiser" /> Bruiser (8 HP)</label>
 							<label><input type="checkbox" class="p-choice-p1" value="bruiser" /> Bruiser (8 HP)</label>
 						</div>
-						<div class="roster-column">
+						<div class="roster-column" id="roster-p2">
 							<h3>Player 2</h3>
 							<label><input type="checkbox" id="p2-king" checked disabled/> King (10 HP) - required</label>
 							<label><input type="checkbox" class="p-choice-p2" value="gunslinger" /> Gunslinger (7 HP)</label>
@@ -39,6 +65,7 @@
 							<label><input type="checkbox" class="p-choice-p2" value="gunslinger" /> Gunslinger (7 HP)</label>
 							<label><input type="checkbox" class="p-choice-p2" value="bruiser" /> Bruiser (8 HP)</label>
 							<label><input type="checkbox" class="p-choice-p2" value="bruiser" /> Bruiser (8 HP)</label>
+						</div>
 						</div>
 					</div>
 					<button id="start-btn">Begin Placement</button>
@@ -63,35 +90,35 @@
 				</div>
 
 				<button id="rules-toggle" class="rules-toggle">View Rules</button>
-				<div id="messages" class="hidden" aria-live="polite"></div>
+				   <div id="messages" class="hidden" aria-live="polite"></div>
+				   <div id="game-log-container" style="margin-top:18px;">
+					   <h3 style="margin-bottom:4px;">Game Log</h3>
+					   <div id="game-log" style="background:#fff; border:1px solid #ccc; min-height:120px; max-height:220px; overflow-y:auto; font-size:0.97em; padding:6px 8px;"></div>
+				   </div>
 			</aside>
 		</main>
 
-		<div id="rules-modal" class="rules-modal hidden">
-			<div class="rules-content">
-				<div class="rules-header">
-					<h2>Rules</h2>
-					<button id="rules-close" type="button" aria-label="Close rules">×</button>
-				</div>
-				<ul>
-					<li>6x6 board, five pieces per player (king + four fighters).</li>
-					<li>Dice: 1-3 movement, 4=double attack, 5=triple attack, 6=skip.</li>
-					<li>Gunslingers hit 3 dmg close, 2 dmg at range; bruisers & kings deal 3 dmg melee.</li>
-					<li>Win by eliminating the opposing king or all fighters.</li>
-				</ul>
-				<p>Place your roster in rows 4-5 after selecting your fighters.</p>
-			</div>
-		</div>
+		   <!-- rules modal removed, now always visible on left -->
 
-		<div id="ready-modal" class="ready-modal hidden">
-			<div class="ready-card">
-				<p>Ready to Duel</p>
-				<button id="ready-continue" type="button">Let's Duel</button>
-			</div>
-		</div>
+		   <div id="ready-modal" class="ready-modal hidden">
+			   <div class="ready-card">
+				   <p>Ready to Duel</p>
+				   <button id="ready-continue" type="button">Let's Duel</button>
+			   </div>
+		   </div>
+
+		   <div id="victory-modal" class="ready-modal hidden" style="z-index:1001;">
+			   <div class="ready-card" style="background:#fffbe6; border:2px solid #e6c200;">
+				   <h2 id="victory-title" style="margin-top:0;">Victory!</h2>
+				   <div id="victory-message">Player X wins!</div>
+				   <button id="victory-close" type="button" style="margin-top:12px;">Close</button>
+			   </div>
+		   </div>
 
 		<footer></footer>
 
-		<script src="app.js"></script>
+			<script src="easyai.js"></script>
+			<script src="mcts.js"></script>
+			<script src="app.js"></script>
 	</body>
 </html>
